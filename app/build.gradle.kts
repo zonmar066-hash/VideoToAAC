@@ -59,8 +59,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("androidx.core:core-ktx:1.12.0")
 
-    // FFmpeg Kit
-    implementation("com.arthenica:ffmpeg-kit-full:6.0-2")
+    // Mobile FFmpeg (full, with loudnorm + aac)
+    implementation("com.arthenica:mobile-ffmpeg-full:4.4")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")

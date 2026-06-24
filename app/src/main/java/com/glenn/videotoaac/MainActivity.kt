@@ -23,8 +23,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.ReturnCode
+import com.arthenica.mobileffmpeg.FFmpeg
+import com.arthenica.mobileffmpeg.Config
 import kotlinx.coroutines.*
 import java.io.File
 
@@ -295,14 +295,13 @@ private suspend fun processFiles(
         val arPart = if (sampleRate != "原始") " -ar $sampleRate" else ""
         val cmd = "-y -i ${tempInput.absolutePath} -vn -c:a aac -b:a 128k -af loudnorm=I=-14:LRA=11:TP=-1$arPart ${tempOutput.absolutePath}"
 
-        val session = FFmpegKit.execute(cmd)
-        val returnCode = session.returnCode
+        val rc = FFmpeg.execute(cmd)
 
         // Clean temp input
         tempInput.delete()
 
-        if (!ReturnCode.isSuccess(returnCode)) {
-            val log = session.allLogsAsString
+        if (rc != Config.RETURN_CODE_SUCCESS) {
+            val log = Config.getLastCommandOutput()
             val shortError = if (log.length > 60) log.takeLast(60) else log
             list[i] = list[i].copy(status = "失败: ${shortError.take(40)}")
             tempOutput.delete()
