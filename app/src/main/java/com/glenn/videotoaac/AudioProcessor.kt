@@ -23,7 +23,7 @@ object AudioProcessor {
         inputUri: Uri,
         outputFile: File,
         targetSampleRate: Int?,
-        onProgress: (String) -> Unit
+        onProgress: suspend (String) -> Unit
     ): Boolean = withContext(Dispatchers.IO) {
         val tempInput = File(context.cacheDir, "v2a_input_${System.nanoTime()}.mp4")
         try {
@@ -49,7 +49,7 @@ object AudioProcessor {
 
             // Apply gain
             val normalized = FloatArray(pcmData.samples.size) {
-                (pcmData.samples[it] * gainLinear).coerceIn(-1f, 1f)
+                (pcmData.samples[it] * gainLinear.toFloat()).coerceIn(-1f, 1f)
             }
 
             // Resample if needed
