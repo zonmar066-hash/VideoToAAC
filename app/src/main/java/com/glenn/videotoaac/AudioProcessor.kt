@@ -33,7 +33,7 @@ object AudioProcessor {
             } ?: return@withContext false
 
             onProgress("提取音频...")
-            val pcmData = extractPcm(tempInput, onProgress) ?: return@withContext false.also { tempInput.delete() }
+            val pcmData = extractPcm(tempInput) ?: return@withContext false.also { tempInput.delete() }
             tempInput.delete()
 
             onProgress("响度分析...")
@@ -77,7 +77,7 @@ object AudioProcessor {
         val channels: Int
     )
 
-    private fun extractPcm(inputFile: File, onProgress: (String) -> Unit): PcmData? {
+    private fun extractPcm(inputFile: File): PcmData? {
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(inputFile.absolutePath)
