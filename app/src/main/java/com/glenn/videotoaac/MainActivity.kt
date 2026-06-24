@@ -23,8 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.arthenica.mobileffmpeg.FFmpeg
-import com.arthenica.mobileffmpeg.Config
 import kotlinx.coroutines.*
 import java.io.File
 
@@ -117,27 +115,19 @@ fun VideoToAACApp() {
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Action buttons
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = { launcher.launch(arrayOf("video/mp4")) },
                     enabled = !isProcessing
-                ) {
-                    Text("选择视频")
-                }
+                ) { Text("选择视频") }
                 OutlinedButton(
                     onClick = { selectedFiles = emptyList() },
                     enabled = selectedFiles.isNotEmpty() && !isProcessing
-                ) {
-                    Text("清空列表")
-                }
+                ) { Text("清空列表") }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Process button
             Button(
                 onClick = {
                     if (selectedFiles.isEmpty()) {
@@ -156,25 +146,23 @@ fun VideoToAACApp() {
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    text = if (isProcessing) "处理中..." else "开始处理 (${selectedFiles.size} 个文件)",
+                    if (isProcessing) "处理中..." else "开始处理 (${selectedFiles.size} 个文件)",
                     fontSize = 16.sp
                 )
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Progress
             if (isProcessing) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 Spacer(modifier = Modifier.height(4.dp))
             }
 
-            // Stats
             val doneCount = selectedFiles.count { it.status == "完成" }
             val failCount = selectedFiles.count { it.status.startsWith("失败") }
             if (selectedFiles.isNotEmpty()) {
                 Text(
-                    text = "完成 $doneCount / ${selectedFiles.size}" +
+                    "完成 $doneCount / ${selectedFiles.size}" +
                             (if (failCount > 0) "  失败 $failCount" else ""),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -182,10 +170,7 @@ fun VideoToAACApp() {
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // File list
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 itemsIndexed(selectedFiles) { index, file ->
                     FileCard(
                         file = file,
@@ -210,29 +195,16 @@ fun FileCard(file: FileItem, onRemove: (() -> Unit)?) {
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
-            modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = file.name,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1
-                )
-                Text(
-                    text = file.status,
-                    color = statusColor,
-                    fontSize = 13.sp
-                )
+                Text(file.name, fontWeight = FontWeight.Medium, maxLines = 1)
+                Text(file.status, color = statusColor, fontSize = 13.sp)
             }
             if (onRemove != null) {
                 IconButton(onClick = onRemove) {
-                    Icon(
-                        Icons.Default.Delete,
-                        contentDescription = "移除",
-                        tint = MaterialTheme.colorScheme.error
-                    )
+                    Icon(Icons.Default.Delete, "移除", tint = MaterialTheme.colorScheme.error)
                 }
             }
         }
@@ -243,9 +215,7 @@ private fun getFileName(context: android.content.Context, uri: Uri): String? {
     var name: String? = null
     context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
         val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        if (idx >= 0 && cursor.moveToFirst()) {
-            name = cursor.getString(idx)
-        }
+        if (idx >= 0 && cursor.moveToFirst()) name = cursor.getString(idx)
     }
     return name
 }
@@ -255,63 +225,41 @@ private suspend fun processFiles(
     files: List<FileItem>,
     sampleRate: String,
     onUpdate: (List<FileItem>) -> Unit
-) = withContext(Dispatchers.IO) {
+) {
     val list = files.toMutableList()
 
     for (i in list.indices) {
-        // Step 1: Copy file to cache
-        list[i] = list[i].copy(status = "复制文件中...")
-        withContext(Dispatchers.Main) { onUpdate(list.toList()) }
-
         val baseName = list[i].name
             .removeSuffix(".mp4").removeSuffix(".MP4")
             .removeSuffix(".mov").removeSuffix(".MOV")
             .removeSuffix(".mkv").removeSuffix(".MKV")
-        val tempInput = File(context.cacheDir, "v2a_input_${System.nanoTime()}.mp4")
 
-        try {
-            context.contentResolver.openInputStream(list[i].uri)?.use { input ->
-                tempInput.outputStream().use { output ->
-                    input.copyTo(output)
-                }
-            } ?: run {
-                list[i] = list[i].copy(status = "失败: 无法读取文件")
-                withContext(Dispatchers.Main) { onUpdate(list.toList()) }
-                continue
-            }
-        } catch (e: Exception) {
-            list[i] = list[i].copy(status = "失败: ${e.message?.take(20)}")
-            withContext(Dispatchers.Main) { onUpdate(list.toList()) }
-            continue
-        }
-
-        // Step 2: Run ffmpeg
-        list[i] = list[i].copy(status = "提取+转码中...")
-        withContext(Dispatchers.Main) { onUpdate(list.toList()) }
-
+        val targetRate = if (sampleRate != "原始") sampleRate.toIntOrNull() else null
         val tempOutput = File(context.cacheDir, "${baseName}.aac")
         tempOutput.delete()
 
-        val arPart = if (sampleRate != "原始") " -ar $sampleRate" else ""
-        val cmd = "-y -i ${tempInput.absolutePath} -vn -c:a aac -b:a 128k -af loudnorm=I=-14:LRA=11:TP=-1$arPart ${tempOutput.absolutePath}"
+        val success = AudioProcessor.process(
+            context = context,
+            inputUri = list[i].uri,
+            outputFile = tempOutput,
+            targetSampleRate = targetRate
+        ) { msg ->
+            list[i] = list[i].copy(status = msg)
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                onUpdate(list.toList())
+            }
+        }
 
-        val rc = FFmpeg.execute(cmd)
-
-        // Clean temp input
-        tempInput.delete()
-
-        if (rc != Config.RETURN_CODE_SUCCESS) {
-            val log = Config.getLastCommandOutput()
-            val shortError = if (log.length > 60) log.takeLast(60) else log
-            list[i] = list[i].copy(status = "失败: ${shortError.take(40)}")
+        if (!success) {
+            list[i] = list[i].copy(status = "失败: 处理出错")
+            onUpdate(list.toList())
             tempOutput.delete()
-            withContext(Dispatchers.Main) { onUpdate(list.toList()) }
             continue
         }
 
-        // Step 3: Save to Downloads
+        // Save to Downloads
         list[i] = list[i].copy(status = "保存到下载...")
-        withContext(Dispatchers.Main) { onUpdate(list.toList()) }
+        onUpdate(list.toList())
 
         val contentValues = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, "${baseName}.aac")
@@ -320,17 +268,12 @@ private suspend fun processFiles(
         }
 
         try {
-            val resolver = context.contentResolver
-            val outputUri = resolver.insert(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-                contentValues
+            val outputUri = context.contentResolver.insert(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues
             )
-
             if (outputUri != null) {
-                resolver.openOutputStream(outputUri)?.use { out ->
-                    tempOutput.inputStream().use { inp ->
-                        inp.copyTo(out)
-                    }
+                context.contentResolver.openOutputStream(outputUri)?.use { out ->
+                    tempOutput.inputStream().use { inp -> inp.copyTo(out) }
                 }
                 list[i] = list[i].copy(status = "完成")
             } else {
@@ -341,6 +284,6 @@ private suspend fun processFiles(
         }
 
         tempOutput.delete()
-        withContext(Dispatchers.Main) { onUpdate(list.toList()) }
+        onUpdate(list.toList())
     }
 }
