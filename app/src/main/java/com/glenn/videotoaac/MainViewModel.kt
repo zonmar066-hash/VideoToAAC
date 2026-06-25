@@ -15,6 +15,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.math.log10
+import kotlin.math.pow
 import java.io.File
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -105,7 +107,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
 
                     // Phase 3: Normalize + encode
-                    val gainDb = 20.0 * kotlin.math.log10(
+                    val gainDb = 20.0 * log10(
                         10.0.pow((-14.0 - meta.measuredLufs) / 20.0)
                     )
                     updatePhase(i, Phase.Normalizing(meta.measuredLufs, gainDb))
