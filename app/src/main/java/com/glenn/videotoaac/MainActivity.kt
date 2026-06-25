@@ -1,11 +1,6 @@
 package com.glenn.videotoaac
 
-import android.content.ContentValues
-import android.net.Uri
 import android.os.Bundle
-import android.os.Environment
-import android.provider.MediaStore
-import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,48 +18,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.*
-import java.io.File
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme {
-                VideoToAACApp()
-            }
+            MaterialTheme { VideoToAACApp() }
         }
     }
 }
 
-data class FileItem(
-    val uri: Uri,
-    val name: String,
-    val status: String = "等待中"
-)
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun VideoToAACApp() {
+fun VideoToAACApp(vm: MainViewModel = viewModel()) {
+    val files by vm.files.collectAsState()
+    val processing by vm.processing.collectAsState()
+    val sampleRate by vm.sampleRate.collectAsState()
     val context = androidx.compose.ui.platform.LocalContext.current
-    val scope = rememberCoroutineScope()
-
-    var selectedFiles by remember { mutableStateOf(listOf<FileItem>()) }
-    var sampleRate by remember { mutableStateOf("原始") }
-    var isProcessing by remember { mutableStateOf(false) }
     var expanded by remember { mutableStateOf(false) }
-    val sampleRateOptions = listOf("原始", "48000", "44100", "22050", "16000")
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris: List<Uri> ->
-        uris.forEach { uri ->
-            val name = getFileName(context, uri) ?: uri.lastPathSegment ?: "unknown.mp4"
-            if (selectedFiles.none { it.uri == uri }) {
-                selectedFiles = selectedFiles + FileItem(uri, name)
-            }
-        }
-    }
+    ) { uris -> vm.addFiles(uris) }
 
     Scaffold(
         topBar = {
@@ -77,107 +53,85 @@ fun VideoToAACApp() {
         }
     ) { padding ->
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(16.dp),
+            modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Sample rate selector
-            ExposedDropdownMenuBox(
-                expanded = expanded,
-                onExpandedChange = { if (!isProcessing) expanded = !expanded }
-            ) {
+            // Sample rate picker
+            ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { if (!processing) expanded = !expanded }) {
                 OutlinedTextField(
                     value = "采样率: $sampleRate",
                     onValueChange = {},
                     readOnly = true,
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .menuAnchor()
+                    modifier = Modifier.fillMaxWidth().menuAnchor()
                 )
-                ExposedDropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false }
-                ) {
-                    sampleRateOptions.forEach { option ->
-                        DropdownMenuItem(
-                            text = { Text(option) },
-                            onClick = {
-                                sampleRate = option
-                                expanded = false
-                            }
-                        )
+                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    listOf("原始", "48000", "44100", "22050", "16000").forEach { opt ->
+                        DropdownMenuItem(text = { Text(opt) }, onClick = {
+                            vm.setSampleRate(opt); expanded = false
+                        })
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(12.dp))
 
+            // Action buttons
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = { launcher.launch(arrayOf("video/mp4")) },
-                    enabled = !isProcessing
-                ) { Text("选择视频") }
-                OutlinedButton(
-                    onClick = { selectedFiles = emptyList() },
-                    enabled = selectedFiles.isNotEmpty() && !isProcessing
-                ) { Text("清空列表") }
+                Button(onClick = { launcher.launch(arrayOf("video/*")) }, enabled = !processing) {
+                    Text("选择视频")
+                }
+                OutlinedButton(onClick = { vm.clearFiles() },
+                    enabled = files.isNotEmpty() && !processing) {
+                    Text("清空")
+                }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(Modifier.height(12.dp))
 
             Button(
                 onClick = {
-                    if (selectedFiles.isEmpty()) {
+                    if (files.isEmpty()) {
                         Toast.makeText(context, "请先选择视频文件", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
-                    isProcessing = true
-                    scope.launch {
-                        processFiles(context, selectedFiles, sampleRate) { updated ->
-                            selectedFiles = updated
-                        }
-                        isProcessing = false
-                    }
+                    vm.startProcessing()
                 },
-                enabled = selectedFiles.isNotEmpty() && !isProcessing,
+                enabled = files.isNotEmpty() && !processing,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
-                    if (isProcessing) "处理中..." else "开始处理 (${selectedFiles.size} 个文件)",
+                    if (processing) "处理中…" else "开始处理 (${files.size} 个文件)",
                     fontSize = 16.sp
                 )
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
-
-            if (isProcessing) {
-                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                Spacer(modifier = Modifier.height(4.dp))
+            if (processing) {
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(Modifier.fillMaxWidth())
             }
 
-            val doneCount = selectedFiles.count { it.status == "完成" }
-            val failCount = selectedFiles.count { it.status.startsWith("失败") }
-            if (selectedFiles.isNotEmpty()) {
+            // Stats
+            val done = files.count { it.phase is MainViewModel.Phase.Done }
+            val failed = files.count { it.phase is MainViewModel.Phase.Failed }
+            if (files.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
                 Text(
-                    "完成 $doneCount / ${selectedFiles.size}" +
-                            (if (failCount > 0) "  失败 $failCount" else ""),
+                    "完成 $done / ${files.size}" +
+                            (if (failed > 0) "  失败 $failed" else ""),
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.height(8.dp))
             }
 
+            Spacer(Modifier.height(8.dp))
+
+            // File list
             LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                itemsIndexed(selectedFiles) { index, file ->
-                    FileCard(
-                        file = file,
-                        onRemove = if (!isProcessing && file.status != "完成") {
-                            { selectedFiles = selectedFiles.toMutableList().also { it.removeAt(index) } }
-                        } else null
-                    )
+                itemsIndexed(files) { idx, file ->
+                    FileCard(file = file, onRemove = if (!processing && file.phase !is MainViewModel.Phase.Done) {
+                        { vm.removeFile(idx) }
+                    } else null)
                 }
             }
         }
@@ -185,11 +139,24 @@ fun VideoToAACApp() {
 }
 
 @Composable
-fun FileCard(file: FileItem, onRemove: (() -> Unit)?) {
-    val statusColor = when {
-        file.status == "完成" -> MaterialTheme.colorScheme.primary
-        file.status.startsWith("失败") -> MaterialTheme.colorScheme.error
-        file.status == "等待中" -> MaterialTheme.colorScheme.onSurfaceVariant
+fun FileCard(file: MainViewModel.FileItem, onRemove: (() -> Unit)?) {
+    val statusText = when (val p = file.phase) {
+        is MainViewModel.Phase.Idle -> "等待中"
+        is MainViewModel.Phase.Copying -> "复制中…"
+        is MainViewModel.Phase.Extracting -> "提取音轨…"
+        is MainViewModel.Phase.Loudness -> "响度: ${"%.1f".format(p.lufs)} LUFS"
+        is MainViewModel.Phase.Resampling -> "重采样…"
+        is MainViewModel.Phase.Normalizing -> "归一化: ${"%.1f".format(p.from)} → -14 LUFS"
+        is MainViewModel.Phase.Encoding -> "编码 AAC…"
+        is MainViewModel.Phase.Saving -> "保存到下载…"
+        is MainViewModel.Phase.Done -> "完成 ✓"
+        is MainViewModel.Phase.Failed -> "失败: ${p.reason}"
+    }
+
+    val statusColor = when (file.phase) {
+        is MainViewModel.Phase.Done -> MaterialTheme.colorScheme.primary
+        is MainViewModel.Phase.Failed -> MaterialTheme.colorScheme.error
+        is MainViewModel.Phase.Idle -> MaterialTheme.colorScheme.onSurfaceVariant
         else -> MaterialTheme.colorScheme.secondary
     }
 
@@ -198,9 +165,9 @@ fun FileCard(file: FileItem, onRemove: (() -> Unit)?) {
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(Modifier.weight(1f)) {
                 Text(file.name, fontWeight = FontWeight.Medium, maxLines = 1)
-                Text(file.status, color = statusColor, fontSize = 13.sp)
+                Text(statusText, color = statusColor, fontSize = 13.sp)
             }
             if (onRemove != null) {
                 IconButton(onClick = onRemove) {
@@ -208,82 +175,5 @@ fun FileCard(file: FileItem, onRemove: (() -> Unit)?) {
                 }
             }
         }
-    }
-}
-
-private fun getFileName(context: android.content.Context, uri: Uri): String? {
-    var name: String? = null
-    context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-        val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-        if (idx >= 0 && cursor.moveToFirst()) name = cursor.getString(idx)
-    }
-    return name
-}
-
-private suspend fun processFiles(
-    context: android.content.Context,
-    files: List<FileItem>,
-    sampleRate: String,
-    onUpdate: (List<FileItem>) -> Unit
-) {
-    val list = files.toMutableList()
-
-    for (i in list.indices) {
-        val baseName = list[i].name
-            .removeSuffix(".mp4").removeSuffix(".MP4")
-            .removeSuffix(".mov").removeSuffix(".MOV")
-            .removeSuffix(".mkv").removeSuffix(".MKV")
-
-        val targetRate = if (sampleRate != "原始") sampleRate.toIntOrNull() else null
-        val tempOutput = File(context.cacheDir, "${baseName}.aac")
-        tempOutput.delete()
-
-        val success = AudioProcessor.process(
-            context = context,
-            inputUri = list[i].uri,
-            outputFile = tempOutput,
-            targetSampleRate = targetRate
-        ) { msg ->
-            list[i] = list[i].copy(status = msg)
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
-                onUpdate(list.toList())
-            }
-        }
-
-        if (!success) {
-            list[i] = list[i].copy(status = "失败: 处理出错")
-            onUpdate(list.toList())
-            tempOutput.delete()
-            continue
-        }
-
-        // Save to Downloads
-        list[i] = list[i].copy(status = "保存到下载...")
-        onUpdate(list.toList())
-
-        val contentValues = ContentValues().apply {
-            put(MediaStore.Downloads.DISPLAY_NAME, "${baseName}.aac")
-            put(MediaStore.Downloads.MIME_TYPE, "audio/aac")
-            put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-        }
-
-        try {
-            val outputUri = context.contentResolver.insert(
-                MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues
-            )
-            if (outputUri != null) {
-                context.contentResolver.openOutputStream(outputUri)?.use { out ->
-                    tempOutput.inputStream().use { inp -> inp.copyTo(out) }
-                }
-                list[i] = list[i].copy(status = "完成")
-            } else {
-                list[i] = list[i].copy(status = "失败: 无法创建输出文件")
-            }
-        } catch (e: Exception) {
-            list[i] = list[i].copy(status = "失败: ${e.message?.take(20)}")
-        }
-
-        tempOutput.delete()
-        onUpdate(list.toList())
     }
 }
